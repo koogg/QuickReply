@@ -48,9 +48,17 @@ sys.excepthook = show_error_and_exit
 
 def main():
     _setup_workdir()
-    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import QSharedMemory
+    from PyQt6.QtWidgets import QApplication, QMessageBox
     app = QApplication(sys.argv)
     app.setApplicationName('快捷回复')
+
+    # 单实例互斥：第二次启动时提示并退出，避免多开窗口
+    single_instance = QSharedMemory('QuickReply_SingleInstance_9f3b1c7e')
+    if not single_instance.create(1):
+        if single_instance.error() == QSharedMemory.SharedMemoryError.AlreadyExists:
+            QMessageBox.information(None, '快捷回复', '快捷回复已在运行中，请勿重复打开。')
+        sys.exit(0)
 
     from main_window import KefuHelperApp
     window = KefuHelperApp()

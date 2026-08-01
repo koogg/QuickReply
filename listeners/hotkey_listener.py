@@ -29,7 +29,7 @@ class HotKeyListenerThread(QThread):
             logger.error('缺少 pynput 或 pywin32 模块，热键功能无法启动。')
             return
 
-        trigger_type = self.settings.get('trigger_type', 'mouse')
+        trigger_type = self.settings.get('trigger_type', 'double_press')
 
         def on_trigger():
             if self._is_running:
@@ -57,7 +57,7 @@ class HotKeyListenerThread(QThread):
                     listener.join()
 
             elif trigger_type == 'double_press' and pynput_keyboard:
-                double_key_str = self.settings.get('double_key', '<ctrl>')
+                double_key_str = self.settings.get('double_key', '<ctrl_r>')
                 key_map = {
                     '<ctrl>': pynput_keyboard.Key.ctrl_l,
                     '<ctrl_r>': pynput_keyboard.Key.ctrl_r,
