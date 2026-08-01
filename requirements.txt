@@ -1,0 +1,6 @@
+PyQt6>=6.7
+pypinyin>=0.50
+pynput>=1.7
+pywin32>=306
+pyinstaller>=6.0
+Pillow>=10.0

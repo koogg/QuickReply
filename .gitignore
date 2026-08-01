@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+
+# Qt
+*.ui.bak
+
+# 运行时产物
+error.log
+backup/
+media_trash/
+QuickReply.spec
+
+# 打包产物
+build/
+dist/
+*.spec.bak
+
+# 数据 / 媒体（按需取消注释）
+Date.json
+media_files/

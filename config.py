@@ -1,0 +1,16 @@
+DATA_FILE = 'Date.json'
+BACKUP_DIR = 'backup'
+TRASH_DIR = 'media_trash'             # 清理文件时转移到此目录，便于撤销
+TRAY_ICON_PATH = 'icon.ico'
+MEDIA_BASE_DIR = 'media_files'
+MEDIA_IMAGES_SUBDIR = 'images'
+MEDIA_FILES_SUBDIR = 'files'
+MENU_PREVIEW_LENGTH = 45
+LIST_PREVIEW_LENGTH = 45
+MAX_AUTO_BACKUPS = 3
+EDITOR_IMAGE_MAX_WIDTH = 50           # 编辑器内 img 显示宽度（仅用于显示，不写入保存内容）
+PASTE_FILE_DELAY_MS = 250             # 大文件粘贴后再贴 HTML 的延时(ms)
+SETTINGS_DOCK_WIDTH_DEFAULT = 260
+SETTINGS_DOCK_WIDTH_MIN = 120
+SETTINGS_DOCK_WIDTH_MAX = 600
+SETTINGS_DOCK_SAVE_DELAY_MS = 300     # 拖拽调整 dock 宽度时延迟写盘的间隔
