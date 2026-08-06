@@ -45,8 +45,9 @@ class KefuHelperApp(QMainWindow, DataManagerMixin, PasteControllerMixin):
         self.quick_popup = None
         self.floating_search = None
         self._paste_target_hwnd = None
-        self._pending_html = None
-        self._pending_plain = None
+        self._paste_sequence_id = 0
+        self._paste_operations = []
+        self._paste_operation_index = 0
         self._last_geometry_str = ''
         self._backup_timer = None
 
@@ -78,6 +79,7 @@ class KefuHelperApp(QMainWindow, DataManagerMixin, PasteControllerMixin):
         content_layout.setContentsMargins(8, 6, 8, 8)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
         content_layout.addWidget(splitter)
 
         left_panel = QWidget()
@@ -116,6 +118,7 @@ class KefuHelperApp(QMainWindow, DataManagerMixin, PasteControllerMixin):
         group_btn_layout.addWidget(self.group_down_btn)
         group_btn_layout.addStretch()
         left_layout.addLayout(group_btn_layout)
+        left_panel.setMinimumWidth(group_btn_layout.minimumSize().width())
 
         splitter.addWidget(left_panel)
 
@@ -172,8 +175,12 @@ class KefuHelperApp(QMainWindow, DataManagerMixin, PasteControllerMixin):
         self.settings_btn.clicked.connect(self.open_settings)
         entry_btn_layout.addWidget(self.settings_btn)
         right_layout.addLayout(entry_btn_layout)
+        right_panel.setMinimumWidth(entry_btn_layout.minimumSize().width())
 
         splitter.addWidget(right_panel)
+        self.main_splitter = splitter
+        self.left_panel = left_panel
+        self.right_panel = right_panel
         splitter.setSizes([200, 450])
 
         main_layout.addWidget(content)

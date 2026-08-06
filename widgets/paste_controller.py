@@ -6,7 +6,11 @@ from PyQt6.QtCore import QTimer, QMimeData, QUrl
 from PyQt6.QtGui import QAction, QTextDocumentFragment
 from PyQt6.QtWidgets import QApplication
 
-from config import MEDIA_BASE_DIR, PASTE_FILE_DELAY_MS, MENU_PREVIEW_LENGTH
+from config import (
+    MEDIA_BASE_DIR, PASTE_FILE_DELAY_MS, PASTE_TEXT_DELAY_MS,
+    MENU_PREVIEW_LENGTH,
+)
+from services.media_paths import resolve_media_path
 from utils import extract_preview, logger
 
 
@@ -14,12 +18,18 @@ VK_CONTROL = 0x11
 VK_V = 0x56
 KEYEVENTF_KEYUP = 0x0002
 WM_PASTE = 0x0302
+ATTACHMENT_LINK_RE = re.compile(
+    r'<a\b[^>]*\bhref\s*=\s*(?P<quote>["\'])'
+    r'(?P<path>[^"\']+)(?P=quote)[^>]*>.*?</a\s*>',
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 
 class PasteControllerMixin:
     """粘贴 / 发送话术的全部逻辑。
 
-    通过 self 访问主窗口的 _paste_target_hwnd / _pending_html / _pending_plain，
+    通过 self 访问主窗口的目标句柄和有序粘贴队列，
     由 KefuHelperApp 继承混入。
     """
 
@@ -36,56 +46,90 @@ class PasteControllerMixin:
         return action
 
     def _do_paste_text(self, html_content, target_hwnd=None):
+        sequence_id = getattr(self, '_paste_sequence_id', 0) + 1
+        self._paste_sequence_id = sequence_id
         self._paste_target_hwnd = target_hwnd
-        processed_html = self._convert_html_for_paste(html_content)
-        plain = QTextDocumentFragment.fromHtml(html_content).toPlainText()
+        self._paste_operations = self._build_paste_operations(html_content)
+        self._paste_operation_index = 0
+        self._run_next_paste_operation(sequence_id)
 
-        attachments = self._collect_attachment_paths(html_content)
-        if attachments:
-            processed_html = self._strip_file_links(processed_html)
-            plain = QTextDocumentFragment.fromHtml(processed_html).toPlainText()
-            self._pending_html = processed_html
-            self._pending_plain = plain
-            mime = QMimeData()
-            mime.setUrls([QUrl.fromLocalFile(fp) for fp in attachments])
-            QApplication.clipboard().setMimeData(mime)
-            QTimer.singleShot(50, self._paste_files_then_html)
+    def _build_paste_operations(self, html_content):
+        """按编辑时的先后顺序拆分文本片段和文件附件。"""
+        abs_base = os.path.abspath(MEDIA_BASE_DIR)
+        operations = []
+        cursor = 0
+        for match in ATTACHMENT_LINK_RE.finditer(html_content):
+            full_path = resolve_media_path(
+                abs_base, match.group('path'), must_exist=True
+            )
+            if not full_path:
+                continue
+            self._append_html_operation(
+                operations, html_content[cursor:match.start()]
+            )
+            operations.append(('file', full_path))
+            cursor = match.end()
+        self._append_html_operation(operations, html_content[cursor:])
+        return operations
+
+    def _append_html_operation(self, operations, html_fragment):
+        if not html_fragment:
+            return
+        processed_html = self._convert_html_for_paste(html_fragment)
+        fragment = QTextDocumentFragment.fromHtml(processed_html)
+        plain = fragment.toPlainText()
+        if not plain and not re.search(r'<img\b', processed_html, re.IGNORECASE):
+            return
+        # 分割点可能位于完整 Qt HTML 文档中间，重新序列化为独立有效片段。
+        operations.append(('html', fragment.toHtml(), plain))
+
+    def _run_next_paste_operation(self, sequence_id):
+        if sequence_id != getattr(self, '_paste_sequence_id', None):
+            return
+        operations = getattr(self, '_paste_operations', [])
+        index = getattr(self, '_paste_operation_index', 0)
+        if index >= len(operations):
+            self._paste_target_hwnd = None
+            self._paste_operations = []
+            return
+
+        operation = operations[index]
+        self._paste_operation_index = index + 1
+        mime = QMimeData()
+        if operation[0] == 'file':
+            mime.setUrls([QUrl.fromLocalFile(operation[1])])
+            next_delay = PASTE_FILE_DELAY_MS
         else:
-            mime = QMimeData()
-            mime.setHtml(processed_html)
-            mime.setText(plain)
-            QApplication.clipboard().setMimeData(mime)
-            QTimer.singleShot(50, self._paste_ctrl_v)
+            mime.setHtml(operation[1])
+            mime.setText(operation[2])
+            next_delay = PASTE_TEXT_DELAY_MS
+        QApplication.clipboard().setMimeData(mime)
+        QTimer.singleShot(
+            50,
+            lambda: self._paste_current_operation(sequence_id, next_delay),
+        )
 
-    def _paste_files_then_html(self):
+    def _paste_current_operation(self, sequence_id, next_delay):
+        if sequence_id != getattr(self, '_paste_sequence_id', None):
+            return
         self._paste_ctrl_v()
-        QTimer.singleShot(PASTE_FILE_DELAY_MS, self._paste_html_only)
-
-    def _paste_html_only(self):
-        html = getattr(self, '_pending_html', '')
-        plain = getattr(self, '_pending_plain', '')
-        self._pending_html = None
-        self._pending_plain = None
-        if html:
-            mime = QMimeData()
-            mime.setHtml(html)
-            mime.setText(plain)
-            QApplication.clipboard().setMimeData(mime)
-            QTimer.singleShot(50, self._paste_ctrl_v)
+        QTimer.singleShot(
+            next_delay,
+            lambda: self._run_next_paste_operation(sequence_id),
+        )
 
     def _collect_attachment_paths(self, html_content):
         abs_base = os.path.abspath(MEDIA_BASE_DIR)
         paths = []
         seen = set()
-        for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\']', html_content):
-            full = os.path.normpath(os.path.join(abs_base, m.group(1)))
-            if os.path.exists(full) and full not in seen:
+        for match in ATTACHMENT_LINK_RE.finditer(html_content):
+            full = resolve_media_path(
+                abs_base, match.group('path'), must_exist=True
+            )
+            if full and full not in seen:
                 seen.add(full)
                 paths.append(full)
         return paths
-
-    def _strip_file_links(self, content):
-        return re.sub(r'<(a|A)\b[^>]*>.*?</(a|A)>', '', content, flags=re.DOTALL)
 
     def _convert_html_for_paste(self, html_content):
         abs_base = os.path.abspath(MEDIA_BASE_DIR)
@@ -94,8 +138,8 @@ class PasteControllerMixin:
             prefix = m.group(1)
             quote = m.group(2)
             path = m.group(3)
-            full = os.path.normpath(os.path.join(abs_base, path))
-            if os.path.exists(full):
+            full = resolve_media_path(abs_base, path, must_exist=True)
+            if full:
                 return prefix + quote + full.replace('\\', '/') + quote
             return m.group(0)
 
@@ -104,7 +148,6 @@ class PasteControllerMixin:
 
     def _paste_ctrl_v(self):
         hwnd = self._paste_target_hwnd
-        self._paste_target_hwnd = None
         try:
             import time
             import win32gui

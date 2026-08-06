@@ -13,6 +13,7 @@ from config import (
     MEDIA_BASE_DIR, MEDIA_IMAGES_SUBDIR, MEDIA_FILES_SUBDIR,
     EDITOR_IMAGE_MAX_WIDTH
 )
+from services.media_paths import resolve_media_path, to_media_relative_path
 from utils import logger
 
 
@@ -131,9 +132,9 @@ class RichHuashuEditDialog(QDialog):
         abs_base = os.path.abspath(MEDIA_BASE_DIR)
         def repl(m):
             attr, quote, rel_path = m.group(1), m.group(2), m.group(3)
-            full_path = os.path.normpath(os.path.join(abs_base, rel_path))
-            if os.path.exists(full_path):
-                abs_path = os.path.abspath(full_path).replace('\\', '/')
+            full_path = resolve_media_path(abs_base, rel_path, must_exist=True)
+            if full_path:
+                abs_path = full_path.replace('\\', '/')
                 return f'{attr}={quote}{abs_path}{quote}'
             return m.group(0)
         html = pattern.sub(repl, html_str)
@@ -199,12 +200,9 @@ class RichHuashuEditDialog(QDialog):
             attr_name = match.group(1)
             quote = match.group(2)
             path = match.group(3)
-            abs_path = os.path.abspath(path)
-            if MEDIA_BASE_DIR in abs_path:
-                parts = abs_path.split(MEDIA_BASE_DIR, 1)
-                if len(parts) > 1:
-                    rel = parts[1].lstrip('\\').replace('\\', '/')
-                    return f'{attr_name}{quote}{rel}{quote}'
+            rel_path = to_media_relative_path(MEDIA_BASE_DIR, path)
+            if rel_path:
+                return f'{attr_name}{quote}{rel_path}{quote}'
             return attr_full
         pattern = re.compile(r'((?:src|href)\s*=\s*)(["\']?)([^"\'\s>]+)\2', re.IGNORECASE)
         html = pattern.sub(convert_to_relative, html)

@@ -1,4 +1,3 @@
-import json
 import shutil
 import os
 import re
@@ -10,6 +9,10 @@ from PyQt6.QtWidgets import QMessageBox, QFileDialog
 from config import (
     DATA_FILE, BACKUP_DIR, MEDIA_BASE_DIR, TRASH_DIR,
 )
+from services.data_store import (
+    atomic_write_json, build_document, load_json_document, rotate_backups,
+)
+from services.media_paths import resolve_media_path
 from utils import logger
 
 
@@ -36,15 +39,16 @@ class DataManagerMixin:
     # ---- 数据加载 / 保存 -----------------------------------------------
 
     def load_data(self):
+        self._data_write_blocked = False
         path = DATA_FILE if os.path.exists(DATA_FILE) else self._legacy_data_file()
         if path and os.path.exists(path):
             try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    obj = json.load(f)
+                obj = load_json_document(path)
                 self.data = obj.get('data', {})
                 self.group_order = obj.get('group_order', [])
                 self.settings = obj.get('settings', {})
             except Exception as e:
+                self._data_write_blocked = True
                 QMessageBox.warning(self, '数据加载失败', str(e))
                 self.data = {}
                 self.group_order = []
@@ -67,24 +71,21 @@ class DataManagerMixin:
         return None
 
     def save_data(self):
+        if getattr(self, '_data_write_blocked', False):
+            QMessageBox.warning(
+                self, '数据保存已阻止',
+                '原数据文件加载失败。为避免覆盖原文件，请先导入一份有效数据。'
+            )
+            return False
+
         _ensure_dir(DATA_FILE)
         try:
-            clean_data = {
-                g: [
-                    {k: v for k, v in e.items() if k != '_pinyin'}
-                    if isinstance(e, dict) else e
-                    for e in entries
-                ]
-                for g, entries in self.data.items()
-            }
-            with open(DATA_FILE, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'data': clean_data,
-                    'group_order': self.group_order,
-                    'settings': self.settings
-                }, f, ensure_ascii=False, indent=2)
+            document = build_document(self.data, self.group_order, self.settings)
+            atomic_write_json(DATA_FILE, document)
+            return True
         except Exception as e:
             QMessageBox.warning(self, '数据保存失败', str(e))
+            return False
 
     # ---- 备份 ---------------------------------------------------------
 
@@ -142,15 +143,7 @@ class DataManagerMixin:
             logger.error('定时备份失败: %s', e)
             return
         keep = int(self.settings.get('backup_keep', 10))
-        backups = sorted([
-            os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR)
-            if f.startswith('Date_backup_') and f.endswith('.json')
-        ], key=os.path.getmtime)
-        while len(backups) > keep:
-            try:
-                os.remove(backups.pop(0))
-            except Exception:
-                pass
+        rotate_backups(BACKUP_DIR, keep)
 
     # ---- 导入 / 导出 --------------------------------------------------
 
@@ -169,11 +162,14 @@ class DataManagerMixin:
             self, '导入数据', '', 'JSON文件 (*.json)')
         if path:
             try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    obj = json.load(f)
-                if 'data' not in obj:
-                    QMessageBox.warning(self, '导入失败', '无效的数据文件')
-                    return
+                obj = load_json_document(path)
+                previous_data = self.data
+                previous_group_order = self.group_order
+                previous_settings = self.settings
+                previous_write_blocked = getattr(
+                    self, '_data_write_blocked', False
+                )
+                new_settings = dict(self.settings)
                 self.data = obj.get('data', {})
                 self.group_order = obj.get('group_order', [])
                 imported_settings = obj.get('settings', {})
@@ -186,8 +182,15 @@ class DataManagerMixin:
                 }
                 for k, v in imported_settings.items():
                     if k not in runtime_keys:
-                        self.settings[k] = v
-                self.save_data()
+                        new_settings[k] = v
+                self.settings = new_settings
+                self._data_write_blocked = False
+                if not self.save_data():
+                    self.data = previous_data
+                    self.group_order = previous_group_order
+                    self.settings = previous_settings
+                    self._data_write_blocked = previous_write_blocked
+                    return
                 self.refresh_group_list()
                 self.refresh_entry_list()
                 QMessageBox.information(self, '导入成功', '数据已导入')
@@ -206,8 +209,8 @@ class DataManagerMixin:
             for entry in group:
                 html = entry.get('html_content', '')
                 for m in re.finditer(r'(?:src|href)=["\']([^"\']+)["\']', html):
-                    path = os.path.normpath(os.path.join(base, m.group(1)))
-                    if os.path.exists(path):
+                    path = resolve_media_path(base, m.group(1), must_exist=True)
+                    if path:
                         referenced.add(path)
 
         unused = []

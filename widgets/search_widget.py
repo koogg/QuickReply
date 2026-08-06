@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 )
 
 from utils import extract_preview, entry_matches, make_entry_label
+from services.window_filters import is_shell_surface_window
 
 try:
     import win32gui
@@ -172,6 +173,8 @@ class FloatingSearchWidget(QWidget):
         try:
             hwnd = win32gui.GetForegroundWindow()
             if not hwnd:
+                return
+            if is_shell_surface_window(hwnd, win32gui):
                 return
             if self.self_hwnd and hwnd == self.self_hwnd:
                 return
