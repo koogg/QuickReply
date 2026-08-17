@@ -11,6 +11,12 @@ venv/
 .idea/
 .vscode/
 
+# 仅本地维护资料
+tests/
+docs/
+pytest.ini
+requirements-dev.txt
+
 # Qt
 *.ui.bak
 
