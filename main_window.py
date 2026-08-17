@@ -45,6 +45,7 @@ class KefuHelperApp(QMainWindow, DataManagerMixin, PasteControllerMixin):
         self.quick_popup = None
         self.floating_search = None
         self._paste_target_hwnd = None
+        self._paste_target_focus_hwnd = None
         self._paste_sequence_id = 0
         self._paste_operations = []
         self._paste_operation_index = 0

@@ -1,6 +1,7 @@
 import os
 import re
 import ctypes as _ctypes
+import time
 
 from PyQt6.QtCore import QTimer, QMimeData, QUrl
 from PyQt6.QtGui import QAction, QTextDocumentFragment
@@ -11,12 +12,13 @@ from config import (
     MENU_PREVIEW_LENGTH,
 )
 from services.media_paths import resolve_media_path
+from services.window_activation import (
+    activate_window, is_target_foreground, send_ctrl_v,
+    target_focus_restored,
+)
 from utils import extract_preview, logger
 
 
-VK_CONTROL = 0x11
-VK_V = 0x56
-KEYEVENTF_KEYUP = 0x0002
 WM_PASTE = 0x0302
 ATTACHMENT_LINK_RE = re.compile(
     r'<a\b[^>]*\bhref\s*=\s*(?P<quote>["\'])'
@@ -45,10 +47,12 @@ class PasteControllerMixin:
         action.setToolTip(entry.get('html_content', ''))
         return action
 
-    def _do_paste_text(self, html_content, target_hwnd=None):
+    def _do_paste_text(self, html_content, target_hwnd=None,
+                       target_focus_hwnd=None):
         sequence_id = getattr(self, '_paste_sequence_id', 0) + 1
         self._paste_sequence_id = sequence_id
         self._paste_target_hwnd = target_hwnd
+        self._paste_target_focus_hwnd = target_focus_hwnd
         self._paste_operations = self._build_paste_operations(html_content)
         self._paste_operation_index = 0
         self._run_next_paste_operation(sequence_id)
@@ -90,6 +94,7 @@ class PasteControllerMixin:
         index = getattr(self, '_paste_operation_index', 0)
         if index >= len(operations):
             self._paste_target_hwnd = None
+            self._paste_target_focus_hwnd = None
             self._paste_operations = []
             return
 
@@ -148,18 +153,46 @@ class PasteControllerMixin:
 
     def _paste_ctrl_v(self):
         hwnd = self._paste_target_hwnd
+        focus_hwnd = getattr(self, '_paste_target_focus_hwnd', None)
         try:
-            import time
             import win32gui
             if hwnd:
-                win32gui.SetForegroundWindow(hwnd)
-                time.sleep(0.08)
+                activate_window(
+                    hwnd,
+                    win32gui,
+                    _ctypes.windll.user32,
+                    _ctypes.windll.kernel32,
+                    focus_hwnd=focus_hwnd,
+                )
+                started_at = time.monotonic()
+                not_before = started_at + 0.08
+                deadline = started_at + 0.35
+                retried = False
+                while time.monotonic() < deadline:
+                    focus_ready = target_focus_restored(
+                        hwnd, focus_hwnd, win32gui, _ctypes.windll.user32
+                    )
+                    # Chromium 类窗口即使已报告焦点成功，也需要短暂时间
+                    # 处理激活消息；过早 SendInput 会被第一次点击吞掉。
+                    if focus_ready and time.monotonic() >= not_before:
+                        break
+                    if not retried and time.monotonic() >= deadline - 0.2:
+                        activate_window(
+                            hwnd,
+                            win32gui,
+                            _ctypes.windll.user32,
+                            _ctypes.windll.kernel32,
+                            focus_hwnd=focus_hwnd,
+                        )
+                        retried = True
+                    time.sleep(0.025)
+                if not is_target_foreground(hwnd, win32gui):
+                    logger.warning('目标窗口激活失败，已取消本次粘贴: hwnd=%s', hwnd)
+                    self._try_wm_paste(hwnd)
+                    return
             time.sleep(0.02)
-            _ctypes.windll.user32.keybd_event(VK_CONTROL, 0, 0, 0)
-            _ctypes.windll.user32.keybd_event(VK_V, 0, 0, 0)
-            time.sleep(0.04)
-            _ctypes.windll.user32.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
-            _ctypes.windll.user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+            if not send_ctrl_v(_ctypes.windll.user32):
+                raise RuntimeError('SendInput 未能发送完整 Ctrl+V 键序列')
         except Exception as e:
             logger.error('Ctrl+V失败(键盘): %s', e)
             self._try_wm_paste(hwnd)

@@ -1,4 +1,5 @@
 import os
+import ctypes
 
 from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtGui import QCursor
@@ -11,6 +12,7 @@ from config import MENU_PREVIEW_LENGTH
 from utils import (
     PINYIN_AVAILABLE, extract_preview, entry_matches, make_entry_label
 )
+from services.window_activation import get_focused_window
 
 try:
     import win32gui
@@ -25,6 +27,7 @@ class QuickSelectPopup(QWidget):
         super().__init__(None, Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         self.parent_app = parent_app
         self.target_hwnd = None
+        self.target_focus_hwnd = None
 
         self.setMinimumSize(420, 320)
         self.setMaximumSize(500, 450)
@@ -179,15 +182,29 @@ class QuickSelectPopup(QWidget):
         if idx < 0 or idx >= len(entries):
             return
         html = entries[idx].get('html_content', '')
+        target_hwnd = self.target_hwnd
+        target_focus_hwnd = self.target_focus_hwnd
         self.close()
-        self.parent_app._do_paste_text(html, target_hwnd=self.target_hwnd)
+        # 等 Qt 完成弹窗隐藏和焦点释放后再开始恢复目标窗口。
+        QTimer.singleShot(
+            0,
+            lambda: self.parent_app._do_paste_text(
+                html,
+                target_hwnd=target_hwnd,
+                target_focus_hwnd=target_focus_hwnd,
+            ),
+        )
 
     def show_at_cursor(self):
         try:
             import win32gui
             self.target_hwnd = win32gui.GetForegroundWindow()
+            self.target_focus_hwnd = get_focused_window(
+                self.target_hwnd, win32gui, ctypes.windll.user32
+            )
         except Exception:
             self.target_hwnd = None
+            self.target_focus_hwnd = None
         cursor = QCursor.pos()
         # 跟随鼠标所在的显示器，而不是固定主屏；
         # 否则在外接副屏上触发时，弹窗会被强行夹回主屏。

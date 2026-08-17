@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 
 from utils import extract_preview, entry_matches, make_entry_label
 from services.window_filters import is_shell_surface_window
+from services.window_activation import get_focused_window
 
 try:
     import win32gui
@@ -40,6 +41,7 @@ class FloatingSearchWidget(QWidget):
         super().__init__(None, Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         self.parent_app = parent_app
         self.last_tracked_hwnd = None
+        self.last_tracked_focus_hwnd = None
         self.self_hwnd = None
         self.main_window_hwnd = None
         self._orientation = '底部'
@@ -247,6 +249,9 @@ class FloatingSearchWidget(QWidget):
                 self.move(x, y)
 
             self.last_tracked_hwnd = hwnd
+            self.last_tracked_focus_hwnd = get_focused_window(
+                hwnd, win32gui, windll.user32
+            )
         except Exception as e:
             # 多显示器坐标系敏感，吞异常会导致问题难定位，至少打个日志
             try:
@@ -365,7 +370,11 @@ class FloatingSearchWidget(QWidget):
             if data:
                 html = action.toolTip()
                 if html and self.last_tracked_hwnd:
-                    self.parent_app._do_paste_text(html, target_hwnd=self.last_tracked_hwnd)
+                    self.parent_app._do_paste_text(
+                        html,
+                        target_hwnd=self.last_tracked_hwnd,
+                        target_focus_hwnd=self.last_tracked_focus_hwnd,
+                    )
                 self.search_edit.clear()
                 if self.results_menu:
                     self.results_menu.close()
@@ -378,7 +387,11 @@ class FloatingSearchWidget(QWidget):
         if 0 <= idx < len(entries):
             html = entries[idx].get('html_content', '')
             if html and self.last_tracked_hwnd:
-                self.parent_app._do_paste_text(html, target_hwnd=self.last_tracked_hwnd)
+                self.parent_app._do_paste_text(
+                    html,
+                    target_hwnd=self.last_tracked_hwnd,
+                    target_focus_hwnd=self.last_tracked_focus_hwnd,
+                )
         self.search_edit.clear()
         self.search_edit.setFocus()
 
