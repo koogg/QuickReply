@@ -17,7 +17,7 @@ class CustomTitleBar(QWidget):
         self.icon_label.setFixedWidth(28)
         layout.addWidget(self.icon_label)
 
-        self.title_label = QLabel('快捷回复v1.02_by52pojie_KOOGG')
+        self.title_label = QLabel('快捷回复v1.0.3_by52pojie_KOOGG')
         self.title_label.setFont(QFont('Microsoft YaHei UI', 11, QFont.Weight.Bold))
         self.title_label.setStyleSheet('color: #D0E0F0;')
         layout.addWidget(self.title_label)

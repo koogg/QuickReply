@@ -1,14 +1,50 @@
 import json
 import os
 import tempfile
+from copy import deepcopy
 
 
 CURRENT_SCHEMA_VERSION = 1
 LEGACY_SCHEMA_VERSION = 0
+IMPORT_CONFLICT_REPLACE = 'replace'
+IMPORT_CONFLICT_APPEND = 'append'
 
 
 class DataValidationError(ValueError):
     """数据文件结构或版本不受当前程序支持。"""
+
+
+def merge_imported_groups(existing_data, existing_order, imported_data,
+                          imported_order, conflict_strategy=None):
+    """合并导入分组，返回新的 data、group_order 和同名分组列表。"""
+    conflicts = [name for name in imported_data if name in existing_data]
+    if conflicts and conflict_strategy not in {
+        IMPORT_CONFLICT_REPLACE, IMPORT_CONFLICT_APPEND,
+    }:
+        raise ValueError('存在同名分组时必须指定替换或追加策略')
+
+    merged_data = deepcopy(existing_data)
+    merged_order = list(existing_order)
+    ordered_imports = []
+    seen = set()
+    for name in list(imported_order) + list(imported_data):
+        if name in imported_data and name not in seen:
+            ordered_imports.append(name)
+            seen.add(name)
+
+    for name in ordered_imports:
+        entries = deepcopy(imported_data[name])
+        if name in merged_data:
+            if conflict_strategy == IMPORT_CONFLICT_REPLACE:
+                merged_data[name] = entries
+            else:
+                merged_data[name] = list(merged_data[name]) + entries
+        else:
+            merged_data[name] = entries
+            if name not in merged_order:
+                merged_order.append(name)
+
+    return merged_data, merged_order, conflicts
 
 
 def _validate_string_list(value, field_name):

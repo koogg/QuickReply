@@ -10,7 +10,9 @@ from config import (
     DATA_FILE, BACKUP_DIR, MEDIA_BASE_DIR, TRASH_DIR,
 )
 from services.data_store import (
-    atomic_write_json, build_document, load_json_document, rotate_backups,
+    IMPORT_CONFLICT_APPEND, IMPORT_CONFLICT_REPLACE,
+    atomic_write_json, build_document, load_json_document,
+    merge_imported_groups, rotate_backups,
 )
 from services.media_paths import resolve_media_path
 from utils import logger
@@ -163,6 +165,19 @@ class DataManagerMixin:
         if path:
             try:
                 obj = load_json_document(path)
+                imported_data = obj.get('data', {})
+                imported_order = obj.get('group_order', [])
+                conflicts = [
+                    name for name in imported_data if name in self.data
+                ]
+                conflict_strategy = None
+                if conflicts:
+                    conflict_strategy = self._ask_import_conflict_strategy(
+                        conflicts
+                    )
+                    if conflict_strategy is None:
+                        return
+
                 previous_data = self.data
                 previous_group_order = self.group_order
                 previous_settings = self.settings
@@ -170,8 +185,13 @@ class DataManagerMixin:
                     self, '_data_write_blocked', False
                 )
                 new_settings = dict(self.settings)
-                self.data = obj.get('data', {})
-                self.group_order = obj.get('group_order', [])
+                self.data, self.group_order, _ = merge_imported_groups(
+                    self.data,
+                    self.group_order,
+                    imported_data,
+                    imported_order,
+                    conflict_strategy,
+                )
                 imported_settings = obj.get('settings', {})
                 runtime_keys = {
                     'trigger_type', 'trigger_key', 'double_key',
@@ -193,9 +213,49 @@ class DataManagerMixin:
                     return
                 self.refresh_group_list()
                 self.refresh_entry_list()
-                QMessageBox.information(self, '导入成功', '数据已导入')
+                new_group_count = len(imported_data) - len(conflicts)
+                if conflicts:
+                    action = (
+                        '替换' if conflict_strategy == IMPORT_CONFLICT_REPLACE
+                        else '追加'
+                    )
+                    detail = (
+                        f'新增 {new_group_count} 个分组，'
+                        f'{action} {len(conflicts)} 个同名分组。'
+                    )
+                else:
+                    detail = f'已新增 {new_group_count} 个分组。'
+                QMessageBox.information(
+                    self, '导入成功', f'数据已导入。{detail}'
+                )
             except Exception as e:
                 QMessageBox.warning(self, '导入失败', str(e))
+
+    def _ask_import_conflict_strategy(self, conflicts):
+        names = '\n'.join(f'• {name}' for name in conflicts[:10])
+        if len(conflicts) > 10:
+            names += f'\n• ……等共 {len(conflicts)} 个分组'
+
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle('发现同名分组')
+        dialog.setText(
+            f'导入文件中有 {len(conflicts)} 个同名分组：\n\n{names}\n\n'
+            '请选择这些分组的处理方式。'
+        )
+        replace_button = dialog.addButton(
+            '替换同名分组', QMessageBox.ButtonRole.AcceptRole
+        )
+        append_button = dialog.addButton(
+            '追加到同名分组', QMessageBox.ButtonRole.ActionRole
+        )
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        if dialog.clickedButton() is replace_button:
+            return IMPORT_CONFLICT_REPLACE
+        if dialog.clickedButton() is append_button:
+            return IMPORT_CONFLICT_APPEND
+        return None
 
     # ---- 文件清理 -----------------------------------------------------
 
