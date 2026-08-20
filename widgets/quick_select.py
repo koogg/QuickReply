@@ -23,6 +23,8 @@ except ImportError:
 
 
 class QuickSelectPopup(QWidget):
+    ENTRY_GROUP_ROLE = Qt.ItemDataRole.UserRole + 1
+
     def __init__(self, parent_app=None):
         super().__init__(None, Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         self.parent_app = parent_app
@@ -57,6 +59,7 @@ class QuickSelectPopup(QWidget):
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(1)
+        splitter.setChildrenCollapsible(False)
 
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
@@ -66,6 +69,7 @@ class QuickSelectPopup(QWidget):
         self.group_list.currentRowChanged.connect(self._on_group_changed)
         left_layout.addWidget(QLabel('分组'))
         left_layout.addWidget(self.group_list)
+        left_panel.setMinimumWidth(100)
         splitter.addWidget(left_panel)
 
         right_panel = QWidget()
@@ -76,15 +80,19 @@ class QuickSelectPopup(QWidget):
         self.entry_list.itemClicked.connect(self._send_entry)
         right_layout.addWidget(QLabel('话术'))
         right_layout.addWidget(self.entry_list)
+        right_panel.setMinimumWidth(220)
         splitter.addWidget(right_panel)
 
+        self.main_splitter = splitter
+        self.left_panel = left_panel
+        self.right_panel = right_panel
         splitter.setSizes([140, 280])
         main_layout.addWidget(splitter)
 
     def _apply_style(self):
         self.setStyleSheet("""
             QuickSelectPopup {
-                background-color: #FFFFFF;
+                background-color: rgb(232, 242, 252);
                 border: 1px solid #B0B0B0;
             }
             QLineEdit {
@@ -150,20 +158,34 @@ class QuickSelectPopup(QWidget):
         return None
 
     def _on_group_changed(self):
-        self._refresh_entries()
+        self._refresh_entries(self.search_edit.text().strip().lower())
 
     def _refresh_entries(self, filter_text=''):
-        group = self._current_group()
         self.entry_list.blockSignals(True)
         self.entry_list.clear()
-        if group and group in self.parent_app.data:
+        if filter_text:
+            groups = self.parent_app.group_order
+        else:
+            current_group = self._current_group()
+            groups = [current_group] if current_group else []
+
+        for group in groups:
+            if group not in self.parent_app.data:
+                continue
             for i, entry in enumerate(self.parent_app.data[group]):
-                plain = extract_preview(entry.get('html_content', ''), MENU_PREVIEW_LENGTH)
+                plain = extract_preview(
+                    entry.get('html_content', ''), MENU_PREVIEW_LENGTH
+                )
                 if not entry_matches(entry, filter_text, plain=plain):
                     continue
                 tags = entry.get('tags', [])
-                li = QListWidgetItem(make_entry_label(plain, '', tags))
+                li = QListWidgetItem(
+                    make_entry_label(
+                        plain, group, tags, show_group=bool(filter_text)
+                    )
+                )
                 li.setData(Qt.ItemDataRole.UserRole, i)
+                li.setData(self.ENTRY_GROUP_ROLE, group)
                 li.setToolTip(entry.get('html_content', ''))
                 self.entry_list.addItem(li)
         self.entry_list.blockSignals(False)
@@ -175,7 +197,7 @@ class QuickSelectPopup(QWidget):
         if not item:
             return
         idx = item.data(Qt.ItemDataRole.UserRole)
-        group = self._current_group()
+        group = item.data(self.ENTRY_GROUP_ROLE) or self._current_group()
         if not group:
             return
         entries = self.parent_app.data.get(group, [])
